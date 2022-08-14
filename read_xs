@@ -1,0 +1,235 @@
+import math
+import numpy as np
+import sys
+
+########### INPUT #############
+
+# specify file to read
+with open('cepout', 'r') as file:
+     lines = file.readlines()   
+        
+# specify file parameters
+number_of_electron_groups = 5
+number_of_legendre_mom = 6
+CSD = True
+
+# specify what should be printed
+print_CSD = True
+print_E_bnds = True
+print_sigma_t = True
+print_sigma_s = True
+print_verification_file = True  
+    
+##############################
+
+# set x-section row structure
+if (CSD):
+    row_number_stopping_power = 5
+    row_number_sigma_t=8
+    row_number_sigma_s=9
+else:
+    row_number_sigma_t=6
+    row_number_sigma_s=7
+
+if ((not CSD) and print_CSD):
+    sys.exit('WARNING: not possible to print CSD if CSD = false')
+
+# determine number of tables and columns in each table for lth moment
+if (number_of_electron_groups% 8 == 0):
+    total_number_of_tables = math.floor((number_of_electron_groups)/8)
+    number_of_groups_in_tables = np.ones(total_number_of_tables,dtype=np.int8)*8
+else:
+    total_number_of_tables = math.floor((number_of_electron_groups)/8) + 1
+    number_of_groups_in_tables = np.ones(total_number_of_tables,dtype=np.int8)*8
+    number_of_groups_in_tables[total_number_of_tables-1] = number_of_electron_groups%8
+
+    
+def get_line_number_of_search_string(search_string):
+    line = [
+        (i, line) for i, line in enumerate(lines)
+        if search_string in line.lower()
+    ]
+    # test if search_string appears only once
+    assert len(line) == 1
+    return line[0][0], line[0][1]
+
+
+def get_energy_boundaries_list():
+    
+    search_string = 'summary of electron group structure'
+    electron_group_structure_line_index, content = get_line_number_of_search_string(search_string)
+    energy_boundaries_list = []
+
+    # Line index of first row of energy bounds table
+    table_starting_line_index = electron_group_structure_line_index + 5
+    # Loop over the lines of the table
+    for idx in range(table_starting_line_index, table_starting_line_index + number_of_electron_groups):
+        # Remove leading and trailing spaces from the line
+        table_line = lines[idx].strip()
+        # Split the line into a list
+        table_line_components = table_line.split()
+        # Add second element of every line to results list
+        energy_boundaries_list.append(table_line_components[1])
+    # Add fourth element of last line to results list
+    energy_boundaries_list.append(table_line_components[3])
+    
+    return energy_boundaries_list
+
+def get_stop_power():
+    
+    # select only tables corresponding to zeroth moment
+    moment_number = 0
+    p_0_moment_line_index, content = get_line_number_of_search_string(f'p {moment_number} moment')
+    group_line_index = p_0_moment_line_index + 4
+    group_line = lines[group_line_index] 
+    
+    # Line index of stopping power row
+    stopping_power_row = group_line_index + row_number_stopping_power 
+    
+    stop_powers =[]
+    # loop over tables
+    for table_number in range(1,total_number_of_tables+1):
+        # loop over columns in stopping power row
+        for columns in range(1,number_of_groups_in_tables[table_number-1]+1):
+            #append value of stopping power
+            stop_powers = np.append(stop_powers,lines[stopping_power_row].strip().split()[columns])
+        
+        stopping_power_row = stopping_power_row + number_of_electron_groups +10
+
+    return stop_powers
+
+
+def get_sigma():
+    
+    # select only tables corresponding to zeroth moment
+    moment_number = 0
+    p_0_moment_line_index, content = get_line_number_of_search_string(f'p {moment_number} moment')
+    group_line_index = p_0_moment_line_index + 4
+    group_line = lines[group_line_index] 
+    
+    # Line index of sigma_t row
+    xs_row = group_line_index + row_number_sigma_t
+    
+    xs =[]
+    # loop over tables
+    for table_number in range(1,total_number_of_tables+1):
+        # loop over columns in sigma_t row
+        for columns in range(1,number_of_groups_in_tables[table_number-1]+1):
+            #append value of sigma_t
+            xs = np.append(xs,lines[xs_row].strip().split()[columns])
+        
+        xs_row = xs_row + number_of_electron_groups + row_number_sigma_t + 2
+    return xs
+
+
+def get_moment_values(moment_number):
+    
+    #select table of lth moment
+    if (moment_number<10):
+        p_l_moment_line_index, content = get_line_number_of_search_string(f'p {moment_number} moment')
+    else:
+        p_l_moment_line_index, content = get_line_number_of_search_string(f'p{moment_number} moment')
+    
+    group_line_index = p_l_moment_line_index + 4
+    group_line = lines[group_line_index] 
+    
+    resulting_value_tuples_list = []
+    
+    # select line index of sigma_s row in first table
+    table_starting_row_index = group_line_index + row_number_sigma_s
+
+
+    # loop over all tables
+    for table_number in range(1,total_number_of_tables+1):
+        # set column index to first entry
+        table_column_index = 1
+        
+        # select line index of sigma_s row in next table
+        if (table_number > 1):
+            table_starting_row_index = table_starting_row_index + number_of_electron_groups + row_number_sigma_s + 1
+        
+        # loop over electron groups
+        for e_group_number in range(1+(table_number-1)*8, (table_number-1)*8+number_of_groups_in_tables[table_number-1]+1):
+            
+            
+            # set number of non-zero xs to extract
+            number_of_values_required = e_group_number
+            
+            # make list with row indices of non-zero xs
+            row_index_list = list(range(
+                table_starting_row_index, table_starting_row_index + number_of_values_required)
+                )[::-1]
+            
+            # append values of g_from, g_to and xs to column_values_list
+            column_values_list = []
+            for i, row_index in enumerate(row_index_list):
+                    
+                    value = (
+                       i + 1,
+                       e_group_number,
+                       lines[row_index].strip().split()[table_column_index]
+                   )
+                
+                    column_values_list.append(value)
+            
+            # extend column_values_list to resulting_value_tuples_list
+            resulting_value_tuples_list.extend(column_values_list)
+            
+            # extend  resulting_values_tuples list with cross sections equal to zero
+            resulting_value_tuples_list.extend([('0', '0', '0')] * (number_of_electron_groups - len(column_values_list)))
+            
+            # set column index for next entry
+            table_column_index = table_column_index + 1
+    
+    # create resulting_value_list (only xs)
+    resulting_value_list = [tup[2] for tup in resulting_value_tuples_list]
+    return resulting_value_list, resulting_value_tuples_list
+
+
+with open('cepxs.lib', 'w') as output_file:
+    
+    if print_E_bnds:
+        # Write energy boundary values
+        energy_boundaries_list = get_energy_boundaries_list()
+        output_file.writelines('! energy boundaries [no_grps + 1]\n')
+        energy_boundaries_str_list = [energy_boundary + '\n' for energy_boundary in energy_boundaries_list]
+        output_file.writelines(energy_boundaries_str_list)
+    
+    if print_CSD:
+        #write stopping power
+        output_file.writelines('! stopping power [no_grps +1] \n')
+        stop_power = get_stop_power()
+        stop_power_str_list = [stop_spower_value + '\n' for stop_spower_value in stop_power]
+        output_file.writelines(stop_power_str_list)
+        output_file.writelines('WARNING: S(E_min) is still missing!\n')
+    
+    if print_sigma_t:
+        # write sigma_t
+        output_file.writelines('! sigma_t [no_grps] \n')
+        xs =get_sigma()
+        xs_str_list = [xs_value + '\n' for xs_value in xs]
+        output_file.writelines(xs_str_list)
+    
+    if print_sigma_s:
+        #write sigma_s 
+        output_file.writelines('! sigma_sl [(scat_order+1)*no_grps*no_grps] \n')
+        for moment_number in range(number_of_legendre_mom + 1):
+            # Write sigma_s{moment_number} values
+            output_file.write(f'! sigma_s{moment_number}\n')
+
+            resulting_value_list, resulting_value_tuples_list = get_moment_values(moment_number)
+            resulting_value_str_list = [resulting_value + '\n' for resulting_value in resulting_value_list]
+            output_file.writelines(resulting_value_str_list)
+
+# print a verification file 
+with open('verification_file.txt', 'w') as test_file:
+        test_file.write('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n')
+        test_file.write('File for verification of output\n')
+        test_file.write('FORMAT: g\', g, sigma_sl(g\' to g)\n')
+        test_file.write('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n')
+        for moment_number in range(number_of_legendre_mom + 1):
+            # Write sigma_s{moment_number} values
+            test_file.write(f'! sigma_s{moment_number}\n')
+            resulting_value_list, resulting_value_tuples_list = get_moment_values(moment_number)
+            write_lines = [f"{value[0]}, {value[1]}, {value[2]}\n" for value in resulting_value_tuples_list]
+            test_file.writelines(write_lines)
